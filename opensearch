@@ -1,0 +1,49 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: VPC Template For Multi-AZ
+Parameters:
+  DomainName:
+    Description: OpenSearch DomainName 
+    Type: String
+  DomainMasterUserName:
+    Description: OpenSearch master user name 
+    Type: String
+  DomainMasterUserPassword:
+    Description: OpenSearch master user password 
+    Type: String
+Resources:
+  OpenSearchServiceDomain:
+    Type: AWS::OpenSearchService::Domain
+    Properties:
+     DomainName: 'crowdbooth-opensearch'
+     EngineVersion: 'OpenSearch_1.2'
+     AdvancedSecurityOptions:
+        Enabled: true
+        InternalUserDatabaseEnabled: true
+        MasterUserOptions:
+          MasterUserName: !Ref DomainMasterUserName
+          MasterUserPassword: !Ref DomainMasterUserPassword
+     DomainEndpointOptions:
+        CustomEndpointEnabled: false
+        EnforceHTTPS: true
+        TLSSecurityPolicy: Policy-Min-TLS-1-0-2019-07
+     ClusterConfig:
+      InstanceCount: '1'
+      InstanceType: 't3.small.search'
+     EBSOptions:
+      EBSEnabled: true
+      Iops: '0'
+      VolumeSize: '10'
+      VolumeType: 'gp2'
+     AccessPolicies:
+      Version: '2012-10-17'
+      Statement:
+        -
+          Effect: 'Allow'
+          Principal:
+            AWS: '*'
+          Action: 'es:*'
+          Resource: !Sub 'arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/${DomainName}/*'
+     EncryptionAtRestOptions:
+        Enabled: true
+     NodeToNodeEncryptionOptions:
+        Enabled: true

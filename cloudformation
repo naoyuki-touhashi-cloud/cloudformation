@@ -1,0 +1,442 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: VPC Template For Multi-AZ
+Parameters:
+  RDSMasterUserName:
+    Description: RDS master user name
+    Type: String
+  RDSMasterUserPassword:
+    Description: RDS master user password
+    Type: String
+  KeyName:
+    Description: The EC2 Key Pair to allow SSH access to the instance
+    Type: 'AWS::EC2::KeyPair::KeyName'
+  DomainName:
+    Description: OpenSearch DomainName 
+    Type: String
+  DomainMasterUserName:
+    Description: OpenSearch master user name 
+    Type: String
+  DomainMasterUserPassword:
+    Description: OpenSearch master user password 
+    Type: String
+Resources:
+  VPC:
+    Type: 'AWS::EC2::VPC'
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      InstanceTenancy: default
+      EnableDnsSupport: 'true'
+      EnableDnsHostnames: 'true'
+      Tags:
+        - Key: Name
+          Value: CrowdBoothVPC
+  eip:
+    Type: 'AWS::EC2::EIP'
+    Properties:
+      Domain: vpc
+  subnetPub1:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      CidrBlock: 10.0.0.0/24
+      AvailabilityZone: !Select 
+        - '0'
+        - !GetAZs 
+          Ref: 'AWS::Region'
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: Public-Subnet-1
+  subnetPub2:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select 
+        - '1'
+        - !GetAZs 
+          Ref: 'AWS::Region'
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: Public-Subnet-2
+  subnetPub3:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select 
+        - '2'
+        - !GetAZs 
+          Ref: 'AWS::Region'
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: Public-Subnet-3
+  subnetPrv1:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      CidrBlock: 10.0.3.0/24
+      AvailabilityZone: !Select 
+        - '0'
+        - !GetAZs 
+          Ref: 'AWS::Region'
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: Private-Subnet-1
+  subnetPrv2:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      CidrBlock: 10.0.4.0/24
+      AvailabilityZone: !Select 
+        - '1'
+        - !GetAZs 
+          Ref: 'AWS::Region'
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: Private-Subnet-2
+  Nat:
+    Type: 'AWS::EC2::NatGateway'
+    Properties:
+      AllocationId: !GetAtt 
+        - eip
+        - AllocationId
+      SubnetId: !Ref subnetPub1
+    DependsOn: eip
+  IGW:
+    Type: 'AWS::EC2::InternetGateway'
+    Properties:
+      Tags:
+        - Key: Name
+          Value: CrowdBooth-IG
+  RouteTablePublic:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: Public-RT
+  RouteTablePrivate:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: Private-RT
+  gw:
+    Type: 'AWS::EC2::VPCGatewayAttachment'
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref IGW
+  subnetRoutePub1:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      RouteTableId: !Ref RouteTablePublic
+      SubnetId: !Ref subnetPub1
+  subnetRoutePub2:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      RouteTableId: !Ref RouteTablePublic
+      SubnetId: !Ref subnetPub2
+  subnetRoutePub3:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      RouteTableId: !Ref RouteTablePublic
+      SubnetId: !Ref subnetPub3
+  subnetRoutePrv1:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      RouteTableId: !Ref RouteTablePrivate
+      SubnetId: !Ref subnetPrv1
+  subnetRoutePrv2:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      RouteTableId: !Ref RouteTablePrivate
+      SubnetId: !Ref subnetPrv2
+  routePublic:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      RouteTableId: !Ref RouteTablePublic
+      GatewayId: !Ref IGW
+    DependsOn: gw
+  routePrivate:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      RouteTableId: !Ref RouteTablePrivate
+      NatGatewayId: !Ref Nat
+    DependsOn:
+      - Nat
+      - subnetRoutePrv1
+      - subnetRoutePrv2
+  LoadBalancerSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: simplechat_lb_sg
+      GroupName: simplechat_lb_sg
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          CidrIp: 0.0.0.0/0
+  WebServerSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: CrowdBooth_web_sg
+      GroupName: CrowdBooth_web_sg
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '80'
+          ToPort: '80'
+          SourceSecurityGroupId: !Ref LoadBalancerSecurityGroup
+  RDSSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: CrowdBooth_db_sg
+      GroupName: CrowdBooth_db_sg
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: '3306'
+          ToPort: '3306'
+          SourceSecurityGroupId: !Ref WebServerSecurityGroup
+  DbSubnetGroup:
+    Type: 'AWS::RDS::DBSubnetGroup'
+    Properties:
+      DBSubnetGroupName: CrowdBooth_db_subnet
+      DBSubnetGroupDescription: CrowdBooth_db_subnet
+      SubnetIds:
+        - !Ref subnetPrv1
+        - !Ref subnetPrv2
+  DBParameterGroup:
+    Type: 'AWS::RDS::DBParameterGroup'
+    Properties:
+      Description: CrowdBooth parameter group
+      Family: mysql5.7
+      Parameters:
+        character_set_client: utf8mb4
+        character_set_connection: utf8mb4
+        character_set_database: utf8mb4
+        character_set_results: utf8mb4
+        character_set_server: utf8mb4
+        collation_connection: utf8mb4_bin
+        collation_server: utf8mb4_bin
+  DbInstance:
+    Type: 'AWS::RDS::DBInstance'
+    Properties:
+      DBInstanceIdentifier: crowdboothdb
+      DBName: crowdboothdb
+      Engine: MySQL
+      EngineVersion: 5.7.22
+      AllocatedStorage: '5'
+      MasterUsername: !Ref RDSMasterUserName
+      MasterUserPassword: !Ref RDSMasterUserPassword
+      DBInstanceClass: db.t2.micro
+      DBSubnetGroupName: !Ref DbSubnetGroup
+      DBParameterGroupName: !Ref DBParameterGroup
+      VPCSecurityGroups:
+        - !Ref RDSSecurityGroup
+  ALB:
+    Type: 'AWS::ElasticLoadBalancingV2::LoadBalancer'
+    Properties:
+      LoadBalancerAttributes:
+        - Key: access_logs.s3.enabled
+          Value: 'false'
+        - Key: deletion_protection.enabled
+          Value: 'false'
+        - Key: idle_timeout.timeout_seconds
+          Value: '60'
+      Name: CrowdBooth-alb
+      Scheme: internet-facing
+      SecurityGroups:
+        - !Ref LoadBalancerSecurityGroup
+      Subnets:
+        - !Ref subnetPub1
+        - !Ref subnetPub2
+      Tags:
+        - Key: Name
+          Value: CrowdBooth-Alb
+  EC21:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      ImageId: ami-0cff7528ff583bf9a
+      KeyName: !Ref KeyName
+      InstanceType: t2.micro
+      NetworkInterfaces: 
+        - AssociatePublicIpAddress: "true"
+          DeviceIndex: "0"
+          SubnetId: !Ref subnetPub1
+          GroupSet:
+            - !Ref EC2SG1
+      UserData: !Base64 |
+        #!/bin/bash
+        sudo yum update
+        sudo yum install -y git
+        sudo amazon-linux-extras enable nginx1
+        sudo amazon-linux-extras install -y nginx1
+        sudo systemctl start nginx.service
+        sudo systemctl enable nginx.service
+        curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.34.0/install.sh | bash
+        . ~/.nvm/nvm.sh
+        nvm install node
+        nvm install 17
+        sudo yum install -y httpd
+        sudo chown -R $USER:$USER /var/www/html/
+      Tags:
+        - Key: Name
+          Value: Dev-CrowdBooth-FrondEnd
+  EC2SG1:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: Dev-CrowdBooth-FrondEnd-SG
+      GroupDescription: Allow SSH and HTTP access only MyIP
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        # http
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        # ssh
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+  EC22:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      ImageId: ami-0cff7528ff583bf9a
+      KeyName: !Ref KeyName
+      InstanceType: t2.micro
+      NetworkInterfaces: 
+        - AssociatePublicIpAddress: "true"
+          DeviceIndex: "0"
+          SubnetId: !Ref subnetPub2
+          GroupSet:
+            - !Ref EC2SG2
+      UserData: !Base64 |
+        #!/bin/bash
+        sudo yum update
+        sudo yum install -y git
+        sudo amazon-linux-extras enable nginx1
+        sudo amazon-linux-extras install -y nginx1
+        sudo systemctl start nginx.service
+        sudo systemctl enable nginx.service
+        sudo amazon-linux-extras enable php8.0
+        sudo amazon-linux-extras install -y php8.0
+        sudo yum install -y php-gd.x86_64
+        sudo yum install -y php-opcache.x86_64
+        sudo yum install -y php-mbstring.x86_64
+        sudo yum install -y php-xml.x86_64
+        sudo systemctl start php-fpm.service
+        sudo systemctl enable php-fpm.service
+        sudo yum install -y httpd
+        sudo chown -R $USER:$USER /var/www/html/
+      Tags:
+        - Key: Name
+          Value: Dev-CrowdBooth-BackEnd
+  EC2SG2:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: Dev-CrowdBooth-BackEnd-SG
+      GroupDescription: Allow SSH and HTTP access only MyIP
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        # http
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        # ssh
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+  EC23:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      ImageId: ami-0cff7528ff583bf9a
+      KeyName: !Ref KeyName
+      InstanceType: t2.micro
+      NetworkInterfaces: 
+        - AssociatePublicIpAddress: "true"
+          DeviceIndex: "0"
+          SubnetId: !Ref subnetPub3
+          GroupSet:
+            - !Ref EC2SG3
+      UserData: !Base64 |
+        #!/bin/bash
+        sudo yum update
+        sudo yum install -y git
+        sudo amazon-linux-extras enable nginx1
+        sudo amazon-linux-extras install -y nginx1
+        sudo systemctl start nginx.service
+        sudo systemctl enable nginx.service
+        sudo amazon-linux-extras enable php8.0
+        sudo amazon-linux-extras install -y php8.0
+        sudo yum install -y php-gd.x86_64
+        sudo yum install -y php-opcache.x86_64
+        sudo yum install -y php-mbstring.x86_64
+        sudo yum install -y php-xml.x86_64
+        sudo systemctl start php-fpm.service
+        sudo systemctl enable php-fpm.service
+        sudo yum install -y httpd
+        sudo chown -R $USER:$USER /var/www/html/
+      Tags:
+        - Key: Name
+          Value: Dev-CrowdBooth-Meeting
+  EC2SG3:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: Dev-CrowdBooth-Meeting-SG
+      GroupDescription: Allow SSH and HTTP access only MyIP
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        # http
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        # ssh
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+  OpenSearchServiceDomain:
+    Type: AWS::OpenSearchService::Domain
+    Properties:
+     DomainName: 'crowdbooth-opensearch'
+     EngineVersion: 'OpenSearch_1.2'
+     AdvancedSecurityOptions:
+        Enabled: true
+        InternalUserDatabaseEnabled: true
+        MasterUserOptions:
+          MasterUserName: !Ref DomainMasterUserName
+          MasterUserPassword: !Ref DomainMasterUserPassword
+     DomainEndpointOptions:
+        CustomEndpointEnabled: false
+        EnforceHTTPS: true
+        TLSSecurityPolicy: Policy-Min-TLS-1-0-2019-07
+     ClusterConfig:
+      InstanceCount: '1'
+      InstanceType: 't3.small.search'
+     EBSOptions:
+      EBSEnabled: true
+      Iops: '0'
+      VolumeSize: '10'
+      VolumeType: 'gp2'
+     AccessPolicies:
+      Version: '2012-10-17'
+      Statement:
+        -
+          Effect: 'Allow'
+          Principal:
+            AWS: '*'
+          Action: 'es:*'
+          Resource: !Sub 'arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/${DomainName}/*'
+     EncryptionAtRestOptions:
+        Enabled: true
+     NodeToNodeEncryptionOptions:
+        Enabled: true
